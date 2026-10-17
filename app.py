@@ -1,0 +1,205 @@
+"""
+app.py
+OceanWatch: Autonomous Marine Data Analytics & Quality Assurance Platform.
+Initial Foundation (FODS Project - Section 0).
+"""
+
+from pathlib import Path
+import streamlit as st
+import pandas as pd
+
+from src.ingestion import load_sample, build_metadata
+from src.validation import validate_dataset
+from src.database import init_db
+
+# Configure page layout and metadata
+st.set_page_config(
+    page_title="OceanWatch | Marine Data Platform",
+    page_icon="🌊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Initialize SQLite database
+init_db("oceanwatch.db")
+
+# Initialize shared session state keys
+if "raw_df" not in st.session_state:
+    st.session_state["raw_df"] = None
+if "active_df" not in st.session_state:
+    st.session_state["active_df"] = None
+if "metadata" not in st.session_state:
+    st.session_state["metadata"] = None
+if "cleaning_log" not in st.session_state:
+    st.session_state["cleaning_log"] = []
+
+# Header and Mission Statement
+st.markdown(
+    """
+    <div style="padding: 1.5rem 0rem 1rem 0rem;">
+        <h1 style="margin: 0; color: #5CE1E6; font-size: 2.5rem;">🌊 OceanWatch</h1>
+        <p style="font-size: 1.15rem; color: #A0B2C6; margin-top: 0.25rem;">
+            Autonomous Marine Observation Analytics & Data Quality Assurance Platform
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Project Milestone Badge
+st.markdown(
+    """
+    <div style="background-color: #122B48; border-left: 4px solid #00A896; padding: 0.8rem 1.2rem; border-radius: 4px; margin-bottom: 1.5rem;">
+        <span style="color: #00A896; font-weight: 600; text-transform: uppercase; font-size: 0.85rem; letter-spacing: 0.05em;">Milestone Status</span>
+        <div style="color: #E0E6ED; font-size: 0.95rem; margin-top: 0.2rem;">
+            <strong>Initial Foundation (Section 0)</strong>: Core data ingestion, multi-strategy cleaning pipeline, physical range validation, and SQLite schema initialized.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Sidebar info
+with st.sidebar:
+    st.title("🌊 OceanWatch")
+    st.caption("FODS Academic Project | v0.1.0")
+    st.markdown("---")
+    
+    if st.session_state["active_df"] is not None:
+        meta = st.session_state["metadata"]
+        st.success("🟢 Dataset Active")
+        st.write(f"**Source**: {meta.get('source_name', 'Unknown')}")
+        st.write(f"**Rows**: {len(st.session_state['active_df']):,}")
+        st.write(f"**Columns**: {len(st.session_state['active_df'].columns)}")
+        if meta.get("is_synthetic"):
+            st.warning("⚠️ Synthetic Benchmark Data")
+    else:
+        st.info("⚪ No dataset loaded yet")
+    
+    st.markdown("---")
+    st.markdown("### Navigation")
+    st.markdown(
+        """
+        - **Home**: Overview & Sample Ingestion
+        - **2 Data Workspace**: Validation, Cleaning & Export
+        - *1 Dashboard* (Roadmap M2)
+        - *3 Exploratory Analysis* (Roadmap M2)
+        - *4 Outlier & PCA* (Roadmap M2)
+        - *5 Reports* (Roadmap M2)
+        """
+    )
+
+# Main container
+col1, col2 = st.columns([1.8, 1.2], gap="large")
+
+with col1:
+    st.subheader("Data Intake & Quick Start")
+    st.markdown(
+        """
+        OceanWatch processes oceanographic observations (temperature, salinity, dissolved oxygen, depth, and coordinates).
+        You can load the standardized benchmark dataset or navigate to the **Data Workspace** to upload your own CSV file.
+        """
+    )
+
+    btn_load = st.button("📥 Load Sample Ocean Dataset", type="primary", use_container_width=True)
+    if btn_load:
+        with st.spinner("Generating / Loading synthetic sample ocean dataset..."):
+            df, meta = load_sample("data/raw/sample_ocean.csv")
+            st.session_state["raw_df"] = df.copy(deep=True)
+            st.session_state["active_df"] = df.copy(deep=True)
+            st.session_state["metadata"] = meta
+            st.session_state["cleaning_log"] = []
+        st.success("Sample ocean dataset successfully loaded into session state!")
+
+with col2:
+    st.subheader("Data Principles & Provenance")
+    st.markdown(
+        """
+        - **Real Computation**: All figures, missingness ratios, and stats are computed live from data.
+        - **Non-Destructive Cleaning**: Raw inputs are preserved; transformations operate on explicit copies.
+        - **Physical Bounds Verification**: Ocean temperature, salinity, oxygen, and depth are validated against thermodynamic limits.
+        """
+    )
+
+st.markdown("---")
+
+# If dataset is loaded, show preview and live validation summary
+if st.session_state["raw_df"] is not None:
+    df = st.session_state["raw_df"]
+    meta = st.session_state["metadata"]
+    
+    # Synthetic notice banner
+    if meta and meta.get("is_synthetic"):
+        st.warning(
+            "⚠️ **SYNTHETIC SAMPLE DATA ACTIVE**: "
+            "This dataset was generated by `scripts/make_sample_data.py` for FODS coursework demonstration. "
+            "It contains intentionally injected missingness (~5%), duplicate observations, and physical sensor spikes."
+        )
+
+    st.subheader("Active Dataset Overview")
+    
+    # Live KPI Cards
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("Total Records", f"{len(df):,}")
+    kpi2.metric("Variables", f"{len(df.columns)}")
+    missing_cells = int(df.isna().sum().sum())
+    total_cells = len(df) * len(df.columns)
+    kpi3.metric("Missing Values", f"{missing_cells:,}", f"{(missing_cells/total_cells)*100:.1f}%")
+    dupes = int(df.duplicated().sum())
+    kpi4.metric("Exact Duplicates", f"{dupes:,}")
+
+    # Validation summary
+    val_report = validate_dataset(df)
+    
+    st.markdown("### Quick Validation Snapshot")
+    if val_report["is_valid"]:
+        st.write("✅ **Dataset Structure**: Valid (contains numeric marine indicators)")
+    else:
+        st.error("❌ **Dataset Structure**: Invalid (missing required numeric columns)")
+
+    v_col1, v_col2 = st.columns(2)
+    with v_col1:
+        st.markdown("**Column Data Types & Missingness**")
+        missing_df = pd.DataFrame({
+            "Column": list(val_report["missing_counts"].keys()),
+            "Type": [str(df[c].dtype) for c in val_report["missing_counts"].keys()],
+            "Missing Count": list(val_report["missing_counts"].values()),
+            "Missing %": list(val_report["missing_percentages"].values()),
+        })
+        st.dataframe(missing_df, hide_index=True, use_container_width=True)
+
+    with v_col2:
+        st.markdown("**Physical Range Inspection**")
+        violations = val_report["range_violations"]
+        if violations:
+            viols_summary = []
+            for col_name, info in violations.items():
+                viols_summary.append({
+                    "Indicator": col_name,
+                    "Violations": info["count"],
+                    "Allowed Range": f"[{info['allowed_min']}, {info['allowed_max']}]",
+                    "Observed Range": f"[{info['observed_min']}, {info['observed_max']}]",
+                })
+            st.dataframe(pd.DataFrame(viols_summary), hide_index=True, use_container_width=True)
+        else:
+            st.success("No physical range violations observed.")
+
+    # Data preview
+    st.markdown("### Data Sample (First 10 Records)")
+    st.dataframe(df.head(10), use_container_width=True)
+
+    st.info("👉 Ready to clean or inspect? Open **2 Data Workspace** in the left sidebar to apply deduplication and missing value imputation.")
+
+else:
+    st.markdown(
+        """
+        <div style="text-align: center; padding: 3rem 1rem; border: 2px dashed #1E3E62; border-radius: 8px; margin-top: 1rem;">
+            <h3 style="color: #7A92A8;">No Dataset Loaded</h3>
+            <p style="color: #A0B2C6; max-width: 500px; margin: 0 auto 1.5rem auto;">
+                Click the <strong>'Load Sample Ocean Dataset'</strong> button above to load the synthetic benchmark,
+                or navigate to the <strong>Data Workspace</strong> page to upload a custom CSV.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
